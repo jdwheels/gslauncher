@@ -16,7 +16,7 @@ func NewLaunchResponse(status string) *LaunchResponse {
 }
 
 const ContentType = "Content-Type"
-const ApplicationJson = "application/json"
+const ApplicationJson = "application/json; charset=utf-8"
 
 func GetRequestOrigin(request *http.Request) string {
 	return (*request).Header.Get("Origin")
@@ -122,16 +122,7 @@ func main() {
 		Handler:   nil,
 		//TLSConfig: tlsConfig,
 	}
-	conf2 := http2.Server{
-		MaxHandlers:                  0,
-		MaxConcurrentStreams:         0,
-		MaxReadFrameSize:             0,
-		PermitProhibitedCipherSuites: false,
-		IdleTimeout:                  0,
-		MaxUploadBufferPerConnection: 0,
-		MaxUploadBufferPerStream:     0,
-		NewWriteScheduler:            nil,
-	}
+	conf2 := http2.Server{}
 	err = http2.ConfigureServer(&server, &conf2)
 
 	if err != nil {
