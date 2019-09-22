@@ -11,4 +11,4 @@ RUN go install -v ./...
 
 CMD ["gslauncher"]
 
-EXPOSE 8100
+EXPOSE 9443

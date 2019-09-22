@@ -1,10 +1,8 @@
 package main
 
 import (
-	"crypto/tls"
 	"encoding/json"
 	"golang.org/x/net/http2"
-	"io/ioutil"
 	"log"
 	"net/http"
 )
@@ -76,11 +74,10 @@ func Options(handlerFunc http.HandlerFunc) http.HandlerFunc {
 }
 
 var AllowedOrigins = &[]string{
-	"http://localhost:3000",
-	"http://localhost:8101",
-	"http://192.168.1.36:8101",
+	"https://localhost:3443",
+	"https://localhost:8443",
 	"https://mars.local:3443",
-	"http://69.132.118.46:8101",
+	"https://mars.local:8443",
 }
 
 var initial = WriteJson(NewLaunchResponse("N/A"))
@@ -91,17 +88,17 @@ var launch = func() http.HandlerFunc {
 
 var terminate = WriteJson(NewLaunchResponse("Terminated"))
 
-func LoadX509KeyPair(certFile, keyFile string) (tls.Certificate, error) {
-	certPEMBlock, err := ioutil.ReadFile(certFile)
-	if err != nil {
-		return tls.Certificate{}, err
-	}
-	keyPEMBlock, err := ioutil.ReadFile(keyFile)
-	if err != nil {
-		return tls.Certificate{}, err
-	}
-	return tls.X509KeyPair(certPEMBlock, keyPEMBlock)
-}
+//func LoadX509KeyPair(certFile, keyFile string) (tls.Certificate, error) {
+//	certPEMBlock, err := ioutil.ReadFile(certFile)
+//	if err != nil {
+//		return tls.Certificate{}, err
+//	}
+//	keyPEMBlock, err := ioutil.ReadFile(keyFile)
+//	if err != nil {
+//		return tls.Certificate{}, err
+//	}
+//	return tls.X509KeyPair(certPEMBlock, keyPEMBlock)
+//}
 
 func main() {
 	http.HandleFunc("/status", Get(initial))
@@ -121,7 +118,7 @@ func main() {
 	//	Certificates: []tls.Certificate{cert},
 	//}
 	server := http.Server{
-		Addr:      "0.0.0.0:8100",
+		Addr:      "0.0.0.0:9443",
 		Handler:   nil,
 		//TLSConfig: tlsConfig,
 	}
