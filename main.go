@@ -10,6 +10,14 @@ import (
 	"path"
 )
 
+func EnvOrDefault(key, def string) string {
+	if val, ok := os.LookupEnv(key); !ok {
+		return def
+	} else {
+		return val
+	}
+}
+
 type LaunchResponse struct {
 	Status string `json:"status"`
 }
@@ -91,6 +99,13 @@ var launch = func() http.HandlerFunc {
 
 var terminate = WriteJson(NewLaunchResponse("Terminated"))
 
+func logRequest(handler http.Handler) http.Handler  {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("%s \"%s %s\" \"%s\"\n", r.RemoteAddr, r.Method, r.URL, r.UserAgent())
+		handler.ServeHTTP(w, r)
+	})
+}
+
 func main() {
 	http.HandleFunc("/status", Get(initial))
 	http.HandleFunc("/launch", Post(launch()))
@@ -103,7 +118,7 @@ func main() {
 
 	server := http.Server{
 		Addr:    fmt.Sprintf("%s:%s", host, port),
-		Handler: nil,
+		Handler: logRequest(http.DefaultServeMux),
 	}
 	conf2 := http2.Server{}
 
@@ -115,13 +130,6 @@ func main() {
 	certName := EnvOrDefault("CERT_NAME", "selfsigned")
 	cert := path.Join(certDir, certName)
 
-	log.Fatal(server.ListenAndServeTLS(cert+".crt", cert+".key"), nil)
+	log.Fatal(server.ListenAndServeTLS(cert+".crt", cert+".key"))
 }
 
-func EnvOrDefault(key, def string) string {
-	if val, ok := os.LookupEnv(key); !ok {
-		return def
-	} else {
-		return val
-	}
-}
