@@ -2,9 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"golang.org/x/net/http2"
 	"log"
 	"net/http"
+	"os"
+	"path"
 )
 
 type LaunchResponse struct {
@@ -77,7 +80,7 @@ var AllowedOrigins = &[]string{
 	"https://localhost:3443",
 	"https://localhost:8443",
 	"https://mars.local:3443",
-	"https://mars.local:8443",
+	EnvOrDefault("FRONTEND_ORIGIN", "https://mars.local:8443"),
 }
 
 var initial = WriteJson(NewLaunchResponse("N/A"))
@@ -88,48 +91,37 @@ var launch = func() http.HandlerFunc {
 
 var terminate = WriteJson(NewLaunchResponse("Terminated"))
 
-//func LoadX509KeyPair(certFile, keyFile string) (tls.Certificate, error) {
-//	certPEMBlock, err := ioutil.ReadFile(certFile)
-//	if err != nil {
-//		return tls.Certificate{}, err
-//	}
-//	keyPEMBlock, err := ioutil.ReadFile(keyFile)
-//	if err != nil {
-//		return tls.Certificate{}, err
-//	}
-//	return tls.X509KeyPair(certPEMBlock, keyPEMBlock)
-//}
-
 func main() {
 	http.HandleFunc("/status", Get(initial))
 	http.HandleFunc("/launch", Post(launch()))
 	http.HandleFunc("/terminate", Post(terminate))
 
 	var err error
-	//cert, err := LoadX509KeyPair(
-	//	"/home/john/algo/wpr/certs/selfsigned.crt",
-	//	"/home/john/algo/wpr/certs/selfsigned.key",
-	//)
-	//if err != nil {
-	//	log.Fatalf("Cert error %s", err)
-	//}
 
-	//tlsConfig := &tls.Config{
-	//	Certificates: []tls.Certificate{cert},
-	//}
+	host := EnvOrDefault("HOST", "0.0.0.0")
+	port := EnvOrDefault("PORT", "9443")
+
 	server := http.Server{
-		Addr:      "0.0.0.0:9443",
-		Handler:   nil,
-		//TLSConfig: tlsConfig,
+		Addr:    fmt.Sprintf("%s:%s", host, port),
+		Handler: nil,
 	}
 	conf2 := http2.Server{}
-	err = http2.ConfigureServer(&server, &conf2)
 
-	if err != nil {
+	if err = http2.ConfigureServer(&server, &conf2); err != nil {
 		log.Fatalf("HTTP2 error %s", err)
 	}
-	log.Fatal(server.ListenAndServeTLS(
-		"/home/john/algo/wpr/certs/selfsigned.crt",
-		"/home/john/algo/wpr/certs/selfsigned.key",
-	), nil)
+
+	certDir := EnvOrDefault("CERT_DIR", "/home/john/algo/wpr/certs")
+	certName := EnvOrDefault("CERT_NAME", "selfsigned")
+	cert := path.Join(certDir, certName)
+
+	log.Fatal(server.ListenAndServeTLS(cert+".crt", cert+".key"), nil)
+}
+
+func EnvOrDefault(key, def string) string {
+	if val, ok := os.LookupEnv(key); !ok {
+		return def
+	} else {
+		return val
+	}
 }
