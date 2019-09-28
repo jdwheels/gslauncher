@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"strconv"
 )
 
 func EnvOrDefault(key, def string) string {
@@ -86,7 +87,7 @@ func Options(handlerFunc http.HandlerFunc) http.HandlerFunc {
 
 var AllowedOrigins = &[]string{
 	"https://localhost:3443",
-	"https://localhost:8443",
+	EnvOrDefault("FRONTEND_ORIGIN_LOCAL", "https://localhost:8443"),
 	"https://mars.local:3443",
 	EnvOrDefault("FRONTEND_ORIGIN", "https://mars.local:8443"),
 }
@@ -120,16 +121,20 @@ func main() {
 		Addr:    fmt.Sprintf("%s:%s", host, port),
 		Handler: logRequest(http.DefaultServeMux),
 	}
-	conf2 := http2.Server{}
+	useHttp2, _ := strconv.ParseBool(EnvOrDefault("USE_HTTP2", "true"))
 
-	if err = http2.ConfigureServer(&server, &conf2); err != nil {
-		log.Fatalf("HTTP2 error %s", err)
+	if useHttp2 {
+		conf2 := http2.Server{}
+
+		if err = http2.ConfigureServer(&server, &conf2); err != nil {
+			log.Fatalf("HTTP2 error %s", err)
+		}
+
+		certDir := EnvOrDefault("CERT_DIR", "/home/john/algo/wpr/certs")
+		certName := EnvOrDefault("CERT_NAME", "selfsigned")
+		cert := path.Join(certDir, certName)
+		log.Fatal(server.ListenAndServeTLS(cert+".crt", cert+".key"))
+	} else {
+		log.Fatal(server.ListenAndServe())
 	}
-
-	certDir := EnvOrDefault("CERT_DIR", "/home/john/algo/wpr/certs")
-	certName := EnvOrDefault("CERT_NAME", "selfsigned")
-	cert := path.Join(certDir, certName)
-
-	log.Fatal(server.ListenAndServeTLS(cert+".crt", cert+".key"))
 }
-
