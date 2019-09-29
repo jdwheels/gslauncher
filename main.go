@@ -1,14 +1,17 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"golang.org/x/net/http2"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"path"
 	"strconv"
+	"syscall"
 )
 
 func EnvOrDefault(key, def string) string {
@@ -108,6 +111,9 @@ func logRequest(handler http.Handler) http.Handler  {
 }
 
 func main() {
+	idleConnsClosed := make(chan struct{})
+
+
 	http.HandleFunc("/status", Get(initial))
 	http.HandleFunc("/launch", Post(launch()))
 	http.HandleFunc("/terminate", Post(terminate))
@@ -121,6 +127,25 @@ func main() {
 		Addr:    fmt.Sprintf("%s:%s", host, port),
 		Handler: logRequest(http.DefaultServeMux),
 	}
+
+	go func() {
+		sigint := make(chan os.Signal, 1)
+
+		// interrupt signal sent from terminal
+		signal.Notify(sigint, os.Interrupt)
+		// sigterm signal sent from kubernetes
+		signal.Notify(sigint, syscall.SIGTERM)
+
+		<-sigint
+
+		// We received an interrupt signal, shut down.
+		if err := server.Shutdown(context.Background()); err != nil {
+			// Error from closing listeners, or context timeout:
+			log.Printf("HTTP server Shutdown: %v", err)
+		}
+		close(idleConnsClosed)
+	}()
+
 	useHttp2, _ := strconv.ParseBool(EnvOrDefault("USE_HTTP2", "true"))
 
 	if useHttp2 {
@@ -133,8 +158,15 @@ func main() {
 		certDir := EnvOrDefault("CERT_DIR", "/home/john/algo/wpr/certs")
 		certName := EnvOrDefault("CERT_NAME", "selfsigned")
 		cert := path.Join(certDir, certName)
-		log.Fatal(server.ListenAndServeTLS(cert+".crt", cert+".key"))
+		err = server.ListenAndServeTLS(cert+".crt", cert+".key")
 	} else {
-		log.Fatal(server.ListenAndServe())
+		err = server.ListenAndServe()
 	}
+
+	if err != nil && err != http.ErrServerClosed {
+		// Error starting or closing listener:
+		log.Printf("HTTP server ListenAndServe: %v", err)
+	}
+
+	<-idleConnsClosed
 }
