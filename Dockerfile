@@ -7,10 +7,12 @@ WORKDIR $GOPATH/src/io.defilade/gslauncher/
 
 COPY go.mod .
 COPY go.sum .
-COPY main.go .
 
 RUN go mod download
 RUN go mod verify
+
+COPY main.go .
+
 RUN GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /go/bin/gslauncher
 
 FROM alpine

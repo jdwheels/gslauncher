@@ -12,6 +12,7 @@ import (
 	"path"
 	"strconv"
 	"syscall"
+	"time"
 )
 
 func EnvOrDefault(key, def string) string {
@@ -26,6 +27,13 @@ type LaunchResponse struct {
 	Status string `json:"status"`
 }
 
+type ExtendedLaunchResponse struct {
+	Status string `json:"status"`
+	IsLaunched bool `json:"is_launched"`
+	IsTerminated bool `json:"is_terminated"`
+	Date int64 `json:"date"`
+}
+
 func NewLaunchResponse(status string) *LaunchResponse {
 	return &LaunchResponse{Status: status}
 }
@@ -37,7 +45,14 @@ func GetRequestOrigin(request *http.Request) string {
 	return (*request).Header.Get("Origin")
 }
 
-func WriteJson(body interface{}) http.HandlerFunc {
+func WriteJsonProvider(body func() ExtendedLaunchResponse, action func()) http.HandlerFunc {
+	return WriteJson(body(), action)
+}
+
+func WriteJson(body interface{}, action func()) http.HandlerFunc {
+	if action != nil {
+		action()
+	}
 	return func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set(ContentType, ApplicationJson)
 		body, err := json.Marshal(body)
@@ -94,14 +109,119 @@ var AllowedOrigins = &[]string{
 	"https://mars.local:3443",
 	EnvOrDefault("FRONTEND_ORIGIN", "https://mars.local:8443"),
 }
+//
+//var initial = func() http.HandlerFunc {
+//	return WriteJsonProvider(func() ExtendedLaunchResponse {
+//		return ExtendedLaunchResponse{"N/A", isLaunched, isTerminated, time.Now().Unix()}
+//	}, nil)
+//}
 
-var initial = WriteJson(NewLaunchResponse("N/A"))
-
-var launch = func() http.HandlerFunc {
-	return WriteJson(NewLaunchResponse("Pending"))
+var initial = func(writer http.ResponseWriter, request *http.Request) {
+	writer.Header().Set(ContentType, ApplicationJson)
+	body, err := json.Marshal(ExtendedLaunchResponse{
+		"N/A",
+		isLaunched,
+		isTerminated,
+		time.Now().Unix(),
+	})
+	if err != nil {
+		writer.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	_, err = writer.Write(body)
+	if err != nil {
+		writer.WriteHeader(http.StatusInternalServerError)
+	}
 }
 
-var terminate = WriteJson(NewLaunchResponse("Terminated"))
+var isTerminated = true
+var isLaunched = false
+
+
+//var launch = func() http.HandlerFunc {
+//	return WriteJson(NewLaunchResponse("Pending"), func() {
+//		isTerminated = false
+//	})
+//}
+var launch = func(writer http.ResponseWriter, request *http.Request) {
+	isTerminated = false
+	writer.Header().Set(ContentType, ApplicationJson)
+	body, err := json.Marshal(NewLaunchResponse("Pending"))
+	if err != nil {
+		writer.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	_, err = writer.Write(body)
+	if err != nil {
+		writer.WriteHeader(http.StatusInternalServerError)
+	}
+}
+
+
+//var launched = func() http.HandlerFunc {
+//	return WriteJson(NewLaunchResponse("ok"), func() {
+//		isLaunched = true
+//	})
+//}
+
+var launched = func(writer http.ResponseWriter, request *http.Request) {
+	isLaunched = true
+	writer.Header().Set(ContentType, ApplicationJson)
+	body, err := json.Marshal(NewLaunchResponse("Ok"))
+	if err != nil {
+		writer.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	_, err = writer.Write(body)
+	if err != nil {
+		writer.WriteHeader(http.StatusInternalServerError)
+	}
+}
+
+
+
+var terminate = func(writer http.ResponseWriter, request *http.Request) {
+	isLaunched = false
+	writer.Header().Set(ContentType, ApplicationJson)
+	body, err := json.Marshal(NewLaunchResponse("Terminating"))
+	if err != nil {
+		writer.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	_, err = writer.Write(body)
+	if err != nil {
+		writer.WriteHeader(http.StatusInternalServerError)
+	}
+}
+
+//var terminate = func() http.HandlerFunc {
+//	isLaunched = false
+//	return WriteJson(NewLaunchResponse("Terminated"), func() {
+//		isLaunched = false
+//	})
+//}
+
+var terminated = func(writer http.ResponseWriter, request *http.Request) {
+	isTerminated = true
+	writer.Header().Set(ContentType, ApplicationJson)
+	body, err := json.Marshal(NewLaunchResponse("ok"))
+	if err != nil {
+		writer.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	_, err = writer.Write(body)
+	if err != nil {
+		writer.WriteHeader(http.StatusInternalServerError)
+	}
+}
+
+//var terminated = func() http.HandlerFunc {
+//	isLaunched = false
+//	return WriteJson(NewLaunchResponse("ok"), func() {
+//		isTerminated = true
+//	})
+//}
+
 
 func logRequest(handler http.Handler) http.Handler  {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -110,13 +230,15 @@ func logRequest(handler http.Handler) http.Handler  {
 	})
 }
 
+
 func main() {
 	idleConnsClosed := make(chan struct{})
-
-
 	http.HandleFunc("/status", Get(initial))
-	http.HandleFunc("/launch", Post(launch()))
+	http.HandleFunc("/status-x", Get(initial))
+	http.HandleFunc("/launch", Post(launch))
 	http.HandleFunc("/terminate", Post(terminate))
+	http.HandleFunc("/launched", Post(launched))
+	http.HandleFunc("/terminated", Post(terminated))
 
 	var err error
 
