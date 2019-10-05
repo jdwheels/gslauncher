@@ -1,12 +1,14 @@
 FROM golang:alpine AS builder
 
+ARG GITHUB_TOKEN
+
 RUN apk update && apk add --no-cache git
 RUN adduser -D -g '' appuser
+RUN git config --global url."https://${GITHUB_TOKEN}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
 
 WORKDIR $GOPATH/src/io.defilade/gslauncher/
 
-COPY go.mod .
-COPY go.sum .
+COPY ./go.mod ./go.sum ./
 
 RUN go mod download
 RUN go mod verify

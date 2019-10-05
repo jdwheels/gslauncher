@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	x "github.com/jdwheels/xaws/pkg/ec2"
 	"golang.org/x/net/http2"
 	"log"
 	"net/http"
@@ -28,10 +29,10 @@ type LaunchResponse struct {
 }
 
 type ExtendedLaunchResponse struct {
-	Status string `json:"status"`
-	IsLaunched bool `json:"is_launched"`
-	IsTerminated bool `json:"is_terminated"`
-	Date int64 `json:"date"`
+	Status       string `json:"status"`
+	IsLaunched   bool   `json:"is_launched"`
+	IsTerminated bool   `json:"is_terminated"`
+	Date         int64  `json:"date"`
 }
 
 func NewLaunchResponse(status string) *LaunchResponse {
@@ -43,29 +44,6 @@ const ApplicationJson = "application/json; charset=utf-8"
 
 func GetRequestOrigin(request *http.Request) string {
 	return (*request).Header.Get("Origin")
-}
-
-func WriteJsonProvider(body func() ExtendedLaunchResponse, action func()) http.HandlerFunc {
-	return WriteJson(body(), action)
-}
-
-func WriteJson(body interface{}, action func()) http.HandlerFunc {
-	if action != nil {
-		action()
-	}
-	return func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set(ContentType, ApplicationJson)
-		body, err := json.Marshal(body)
-		if err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		_, err = writer.Write(body)
-		if err != nil {
-			writer.WriteHeader(http.StatusInternalServerError)
-		}
-
-	}
 }
 
 func setupResponse(w *http.ResponseWriter, req *http.Request) {
@@ -109,127 +87,82 @@ var AllowedOrigins = &[]string{
 	"https://mars.local:3443",
 	EnvOrDefault("FRONTEND_ORIGIN", "https://mars.local:8443"),
 }
-//
-//var initial = func() http.HandlerFunc {
-//	return WriteJsonProvider(func() ExtendedLaunchResponse {
-//		return ExtendedLaunchResponse{"N/A", isLaunched, isTerminated, time.Now().Unix()}
-//	}, nil)
-//}
 
-var initial = func(writer http.ResponseWriter, request *http.Request) {
-	writer.Header().Set(ContentType, ApplicationJson)
-	body, err := json.Marshal(ExtendedLaunchResponse{
+func initial(writer http.ResponseWriter, _ *http.Request) {
+	writeJson(&writer, ExtendedLaunchResponse{
 		"N/A",
 		isLaunched,
 		isTerminated,
 		time.Now().Unix(),
 	})
-	if err != nil {
-		writer.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-	_, err = writer.Write(body)
-	if err != nil {
-		writer.WriteHeader(http.StatusInternalServerError)
-	}
 }
 
 var isTerminated = true
 var isLaunched = false
+var clusterName = EnvOrDefault("CLUSTER_NAME", "EC2ContainerService-game-servers-2-EcsInstanceAsg-9AB2NHDSISGL")
 
-
-//var launch = func() http.HandlerFunc {
-//	return WriteJson(NewLaunchResponse("Pending"), func() {
-//		isTerminated = false
-//	})
-//}
-var launch = func(writer http.ResponseWriter, request *http.Request) {
-	isTerminated = false
-	writer.Header().Set(ContentType, ApplicationJson)
-	body, err := json.Marshal(NewLaunchResponse("Pending"))
-	if err != nil {
-		writer.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-	_, err = writer.Write(body)
-	if err != nil {
-		writer.WriteHeader(http.StatusInternalServerError)
+func awsAction(writer *http.ResponseWriter, action func(string) bool, status string, toggle func()) {
+	if success := action(clusterName); success {
+		toggle()
+		writeJson(writer, NewLaunchResponse(status))
+	} else {
+		(*writer).WriteHeader(http.StatusInternalServerError)
 	}
 }
 
+func awsEvent(writer *http.ResponseWriter, status string, toggle func()) {
+	toggle()
+	writeJson(writer, NewLaunchResponse(status))
+}
 
-//var launched = func() http.HandlerFunc {
-//	return WriteJson(NewLaunchResponse("ok"), func() {
-//		isLaunched = true
-//	})
-//}
-
-var launched = func(writer http.ResponseWriter, request *http.Request) {
-	isLaunched = true
-	writer.Header().Set(ContentType, ApplicationJson)
-	body, err := json.Marshal(NewLaunchResponse("Ok"))
-	if err != nil {
-		writer.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-	_, err = writer.Write(body)
-	if err != nil {
-		writer.WriteHeader(http.StatusInternalServerError)
+func writeJson(writer *http.ResponseWriter, body interface{}) {
+	if jsonBody, err := json.Marshal(body); err != nil {
+		(*writer).WriteHeader(http.StatusInternalServerError)
+	} else if _, err = (*writer).Write(jsonBody); err != nil {
+		(*writer).WriteHeader(http.StatusInternalServerError)
+	} else {
+		(*writer).Header().Set(ContentType, ApplicationJson)
 	}
 }
 
-
-
-var terminate = func(writer http.ResponseWriter, request *http.Request) {
-	isLaunched = false
-	writer.Header().Set(ContentType, ApplicationJson)
-	body, err := json.Marshal(NewLaunchResponse("Terminating"))
-	if err != nil {
-		writer.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-	_, err = writer.Write(body)
-	if err != nil {
-		writer.WriteHeader(http.StatusInternalServerError)
-	}
+func launch(writer http.ResponseWriter, _ *http.Request) {
+	awsAction(&writer, x.StartEC2Cluster, "Pending", func() {
+		isLaunched = false
+		isTerminated = false
+	})
 }
 
-//var terminate = func() http.HandlerFunc {
-//	isLaunched = false
-//	return WriteJson(NewLaunchResponse("Terminated"), func() {
-//		isLaunched = false
-//	})
-//}
-
-var terminated = func(writer http.ResponseWriter, request *http.Request) {
-	isTerminated = true
-	writer.Header().Set(ContentType, ApplicationJson)
-	body, err := json.Marshal(NewLaunchResponse("ok"))
-	if err != nil {
-		writer.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-	_, err = writer.Write(body)
-	if err != nil {
-		writer.WriteHeader(http.StatusInternalServerError)
-	}
+func launched(writer http.ResponseWriter, _ *http.Request) {
+	awsEvent(&writer, "Ok", func() {
+		isTerminated = false
+		isLaunched = true
+	})
 }
 
-//var terminated = func() http.HandlerFunc {
-//	isLaunched = false
-//	return WriteJson(NewLaunchResponse("ok"), func() {
-//		isTerminated = true
-//	})
-//}
+func terminate(writer http.ResponseWriter, _ *http.Request) {
+	awsAction(&writer, x.StopEC2Cluster, "Terminating", func() {
+		isTerminated = false
+		isLaunched = false
+	})
+}
 
+func errTest(writer http.ResponseWriter, _ *http.Request) {
+	writer.WriteHeader(http.StatusBadRequest)
+}
 
-func logRequest(handler http.Handler) http.Handler  {
+func terminated(writer http.ResponseWriter, _ *http.Request) {
+	awsEvent(&writer, "ok", func() {
+		isLaunched = false
+		isTerminated = true
+	})
+}
+
+func logRequest(handler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("%s \"%s %s\" \"%s\"\n", r.RemoteAddr, r.Method, r.URL, r.UserAgent())
 		handler.ServeHTTP(w, r)
 	})
 }
-
 
 func main() {
 	idleConnsClosed := make(chan struct{})
@@ -239,6 +172,7 @@ func main() {
 	http.HandleFunc("/terminate", Post(terminate))
 	http.HandleFunc("/launched", Post(launched))
 	http.HandleFunc("/terminated", Post(terminated))
+	http.HandleFunc("/err", Get(errTest))
 
 	var err error
 
