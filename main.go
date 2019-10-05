@@ -117,7 +117,8 @@ func awsEvent(writer *http.ResponseWriter, status string, toggle func()) {
 
 func writeJson(writer *http.ResponseWriter, body interface{}) {
 	(*writer).Header().Set(ContentType, ApplicationJson)
-	jsonBody, err := json.Marshal(body); if err != nil {
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
 		(*writer).WriteHeader(http.StatusInternalServerError)
 	} else if _, err = (*writer).Write(jsonBody); err != nil {
 		(*writer).WriteHeader(http.StatusInternalServerError)
