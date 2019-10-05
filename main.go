@@ -40,7 +40,7 @@ func NewLaunchResponse(status string) *LaunchResponse {
 }
 
 const ContentType = "Content-Type"
-const ApplicationJson = "application/json; charset=utf-8"
+const ApplicationJson = "application/json"
 
 func GetRequestOrigin(request *http.Request) string {
 	return (*request).Header.Get("Origin")
@@ -116,12 +116,11 @@ func awsEvent(writer *http.ResponseWriter, status string, toggle func()) {
 }
 
 func writeJson(writer *http.ResponseWriter, body interface{}) {
-	if jsonBody, err := json.Marshal(body); err != nil {
+	(*writer).Header().Set(ContentType, ApplicationJson)
+	jsonBody, err := json.Marshal(body); if err != nil {
 		(*writer).WriteHeader(http.StatusInternalServerError)
 	} else if _, err = (*writer).Write(jsonBody); err != nil {
 		(*writer).WriteHeader(http.StatusInternalServerError)
-	} else {
-		(*writer).Header().Set(ContentType, ApplicationJson)
 	}
 }
 
@@ -146,15 +145,15 @@ func terminate(writer http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func errTest(writer http.ResponseWriter, _ *http.Request) {
-	writer.WriteHeader(http.StatusBadRequest)
-}
-
 func terminated(writer http.ResponseWriter, _ *http.Request) {
-	awsEvent(&writer, "ok", func() {
+	awsEvent(&writer, "Ok", func() {
 		isLaunched = false
 		isTerminated = true
 	})
+}
+
+func errTest(writer http.ResponseWriter, _ *http.Request) {
+	writer.WriteHeader(http.StatusBadRequest)
 }
 
 func logRequest(handler http.Handler) http.Handler {
