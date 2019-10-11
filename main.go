@@ -100,14 +100,28 @@ func initial(writer http.ResponseWriter, _ *http.Request) {
 var isTerminated = true
 var isLaunched = false
 var clusterName = EnvOrDefault("CLUSTER_NAME", "EC2ContainerService-game-servers-2-EcsInstanceAsg-9AB2NHDSISGL")
+var isProd = EnvOrDefault("GOENV", "dev") == "production"
 
 func awsAction(writer *http.ResponseWriter, action func(string) bool, status string, toggle func()) {
-	if success := action(clusterName); success {
+	if success := actionWrapper(clusterName, action); success {
 		toggle()
 		writeJson(writer, NewLaunchResponse(status))
 	} else {
 		(*writer).WriteHeader(http.StatusInternalServerError)
 	}
+}
+
+func actionWrapper(target string, action func(string) bool) bool  {
+	log.Printf("GOENV => %s => isProd => %t", EnvOrDefault("GOENV", "dev"), isProd)
+	if isProd {
+		return action(target)
+	}
+	return dryAction(target)
+}
+
+func dryAction(target string) bool {
+	log.Printf("Simulating action on '%s'", target)
+	return true
 }
 
 func awsEvent(writer *http.ResponseWriter, status string, toggle func()) {
