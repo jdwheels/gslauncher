@@ -111,7 +111,7 @@ func awsAction(writer *http.ResponseWriter, action func(string) bool, status str
 	}
 }
 
-func actionWrapper(target string, action func(string) bool) bool  {
+func actionWrapper(target string, action func(string) bool) bool {
 	log.Printf("GOENV => %s => isProd => %t", EnvOrDefault("GOENV", "dev"), isProd)
 	if isProd {
 		return action(target)
