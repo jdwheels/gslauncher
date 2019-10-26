@@ -8,6 +8,8 @@ github.com/aws/aws-sdk-go v1.25.11 h1:wUivbsVOH3LpHdC3Rl5i+FLHfg4sOmYgv4bvHe7+/P
 github.com/aws/aws-sdk-go v1.25.11/go.mod h1:KmX6BPdI08NWTb3/sm4ZGu5ShLoqVDhKgpiN924inxo=
 github.com/aws/aws-sdk-go v1.25.16 h1:k7Fy6T/uNuLX6zuayU/TJoP7yMgGcJSkZpF7QVjwYpA=
 github.com/aws/aws-sdk-go v1.25.16/go.mod h1:KmX6BPdI08NWTb3/sm4ZGu5ShLoqVDhKgpiN924inxo=
+github.com/aws/aws-sdk-go v1.25.19 h1:sp3xP91qIAVhWufyn9qM6Zhhn6kX06WJQcmhRj7QTXc=
+github.com/aws/aws-sdk-go v1.25.19/go.mod h1:KmX6BPdI08NWTb3/sm4ZGu5ShLoqVDhKgpiN924inxo=
 github.com/davecgh/go-spew v1.1.0 h1:ZDRjVQ15GmhC3fiQ8ni8+OwkZQO4DARzQgrnXU1Liz8=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/jdwheels/xaws v0.0.0-20191005192618-402177c8765a h1:NG5FEmz18x0/DCd0cE0VBj4J8+DetgxfZAsb7Akvxho=
