@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"defilade.io/gslauncher/sse"
 	"encoding/json"
 	"fmt"
 	x "github.com/jdwheels/xaws/pkg/ec2"
@@ -178,65 +179,107 @@ func logRequest(handler http.Handler) http.Handler {
 	})
 }
 
-func main() {
-	idleConnsClosed := make(chan struct{})
-	http.HandleFunc("/status", Get(initial))
-	http.HandleFunc("/status-x", Get(initial))
-	http.HandleFunc("/launch", Post(launch))
-	http.HandleFunc("/terminate", Post(terminate))
-	http.HandleFunc("/launched", Post(launched))
-	http.HandleFunc("/terminated", Post(terminated))
-	http.HandleFunc("/err", Get(errTest))
+func configureHttp2Server(server *http.Server) (f func() error, err error) {
+	conf2 := http2.Server{}
 
-	var err error
-
-	host := EnvOrDefault("HOST", "0.0.0.0")
-	port := EnvOrDefault("PORT", "9443")
-
-	server := http.Server{
-		Addr:    fmt.Sprintf("%s:%s", host, port),
-		Handler: logRequest(http.DefaultServeMux),
+	if err = http2.ConfigureServer(server, &conf2); err != nil {
+		log.Fatalf("HTTP2 error %s", err)
 	}
 
-	go func() {
-		sigint := make(chan os.Signal, 1)
+	certDir := EnvOrDefault("CERT_DIR", "/home/john/algo/wpr/certs")
+	certName := EnvOrDefault("CERT_NAME", "selfsigned")
+	cert := path.Join(certDir, certName)
+	f = func() error {
+		return server.ListenAndServeTLS(cert+".crt", cert+".key")
+	}
+	return
+}
 
-		// interrupt signal sent from terminal
-		signal.Notify(sigint, os.Interrupt)
-		// sigterm signal sent from kubernetes
-		signal.Notify(sigint, syscall.SIGTERM)
-
-		<-sigint
-
-		// We received an interrupt signal, shut down.
-		if err := server.Shutdown(context.Background()); err != nil {
-			// Error from closing listeners, or context timeout:
-			log.Printf("HTTP server Shutdown: %v", err)
-		}
-		close(idleConnsClosed)
-	}()
+func configureServer(mux *http.ServeMux, host, port string) (server *http.Server, f func() error) {
+	server = newServer(mux, host, port)
 
 	useHttp2, _ := strconv.ParseBool(EnvOrDefault("USE_HTTP2", "true"))
 
 	if useHttp2 {
-		conf2 := http2.Server{}
-
-		if err = http2.ConfigureServer(&server, &conf2); err != nil {
-			log.Fatalf("HTTP2 error %s", err)
+		var err error
+		f, err = configureHttp2Server(server)
+		if err != nil {
+			log.Fatalf("Configure error: %v", err)
 		}
-
-		certDir := EnvOrDefault("CERT_DIR", "/home/john/algo/wpr/certs")
-		certName := EnvOrDefault("CERT_NAME", "selfsigned")
-		cert := path.Join(certDir, certName)
-		err = server.ListenAndServeTLS(cert+".crt", cert+".key")
 	} else {
-		err = server.ListenAndServe()
+		f = func() error {
+			return server.ListenAndServe()
+		}
+	}
+	return
+}
+
+func HandleClose(idleConnsClosed chan struct{}, servers []*http.Server) {
+	sigint := make(chan os.Signal, 1)
+
+	signal.Notify(sigint, os.Interrupt, syscall.SIGTERM)
+
+	<-sigint
+
+	// We received an interrupt signal, shut down.
+	for _, server := range servers {
+		if err := server.Shutdown(context.Background()); err != nil {
+			// Error from closing listeners, or context timeout:
+			log.Printf("HTTP server Shutdown: %v", err)
+		} else {
+			log.Printf("Shutting down...")
+		}
 	}
 
-	if err != nil && err != http.ErrServerClosed {
-		// Error starting or closing listener:
-		log.Printf("HTTP server ListenAndServe: %v", err)
+	close(idleConnsClosed)
+}
+
+func newServer(mux *http.ServeMux, host, port string) *http.Server {
+	return &http.Server{
+		Addr:    fmt.Sprintf("%s:%s", host, port),
+		Handler: logRequest(mux),
+	}
+}
+
+func main() {
+	idleConnsClosed := make(chan struct{})
+	mux := http.NewServeMux()
+	mux.HandleFunc("/status", Get(initial))
+	mux.HandleFunc("/status-x", Get(initial))
+	mux.HandleFunc("/launch", Post(launch))
+	mux.HandleFunc("/terminate", Post(terminate))
+	mux.HandleFunc("/launched", Post(launched))
+	mux.HandleFunc("/terminated", Post(terminated))
+	mux.HandleFunc("/err", Get(errTest))
+	host := EnvOrDefault("HOST", "0.0.0.0")
+	port := EnvOrDefault("PORT", "9443")
+	server, fS := configureServer(mux, host, port)
+
+	broker := sse.NewBroker()
+	muxE := http.NewServeMux()
+	muxE.Handle("/listen", broker)
+	muxE.HandleFunc("/event", broker.Event)
+	portE := EnvOrDefault("PORT_E", "9444")
+	serverE, fE := configureServer(muxE, host, portE)
+
+	servers := []*http.Server{server, serverE}
+
+	go HandleClose(idleConnsClosed, servers)
+
+	fs := []*func() error{&fS, &fE}
+	log.Print(len(fs))
+	for i := 0; i < len(fs); i++  {
+		log.Print(i)
+		f := fs[i]
+		go func() {
+			err := (*f)()
+			if err != nil && err != http.ErrServerClosed {
+				// Error starting or closing listener:
+				log.Fatalf("HTTP server ListenAndServe: %v", err)
+			}
+		}()
 	}
 
 	<-idleConnsClosed
+	log.Printf("Shutdown.")
 }
