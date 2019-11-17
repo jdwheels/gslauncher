@@ -2,7 +2,8 @@ package main
 
 import (
 	"context"
-	"defilade.io/gslauncher/sse"
+	"defilade.io/gslauncher/pkg/sse"
+	status2 "defilade.io/gslauncher/pkg/status"
 	"encoding/json"
 	"fmt"
 	x "github.com/jdwheels/xaws/pkg/ec2"
@@ -23,21 +24,6 @@ func EnvOrDefault(key, def string) string {
 	} else {
 		return val
 	}
-}
-
-type LaunchResponse struct {
-	Status string `json:"status"`
-}
-
-type ExtendedLaunchResponse struct {
-	Status       string `json:"status"`
-	IsLaunched   bool   `json:"is_launched"`
-	IsTerminated bool   `json:"is_terminated"`
-	Date         int64  `json:"date"`
-}
-
-func NewLaunchResponse(status string) *LaunchResponse {
-	return &LaunchResponse{Status: status}
 }
 
 const ContentType = "Content-Type"
@@ -90,11 +76,11 @@ var AllowedOrigins = &[]string{
 }
 
 func initial(writer http.ResponseWriter, _ *http.Request) {
-	writeJson(&writer, ExtendedLaunchResponse{
-		"N/A",
-		isLaunched,
-		isTerminated,
-		time.Now().Unix(),
+	writeJson(&writer, status2.ExtendedLaunchResponse{
+		Status:       "N/A",
+		IsLaunched:   isLaunched,
+		IsTerminated: isTerminated,
+		Date:         time.Now().Unix(),
 	})
 }
 
@@ -106,7 +92,7 @@ var isProd = EnvOrDefault("GOENV", "dev") == "production"
 func awsAction(writer *http.ResponseWriter, action func(string) bool, status string, toggle func()) {
 	if success := actionWrapper(clusterName, action); success {
 		toggle()
-		writeJson(writer, NewLaunchResponse(status))
+		writeJson(writer, status2.NewLaunchResponse(status))
 	} else {
 		(*writer).WriteHeader(http.StatusInternalServerError)
 	}
@@ -127,7 +113,7 @@ func dryAction(target string) bool {
 
 func awsEvent(writer *http.ResponseWriter, status string, toggle func()) {
 	toggle()
-	writeJson(writer, NewLaunchResponse(status))
+	writeJson(writer, status2.NewLaunchResponse(status))
 }
 
 func writeJson(writer *http.ResponseWriter, body interface{}) {
@@ -147,11 +133,14 @@ func launch(writer http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func launched(writer http.ResponseWriter, _ *http.Request) {
-	awsEvent(&writer, "Ok", func() {
-		isTerminated = false
-		isLaunched = true
-	})
+func launched(broker *sse.Broker) http.HandlerFunc {
+	return func(writer http.ResponseWriter, _ *http.Request) {
+		broker.SimpleEvent("launched")
+		awsEvent(&writer, "Ok", func() {
+			isTerminated = false
+			isLaunched = true
+		})
+	}
 }
 
 func terminate(writer http.ResponseWriter, _ *http.Request) {
@@ -161,11 +150,14 @@ func terminate(writer http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func terminated(writer http.ResponseWriter, _ *http.Request) {
-	awsEvent(&writer, "Ok", func() {
-		isLaunched = false
-		isTerminated = true
-	})
+func terminated(broker *sse.Broker) http.HandlerFunc {
+	return func(writer http.ResponseWriter, _ *http.Request) {
+		broker.SimpleEvent("terminated")
+		awsEvent(&writer, "Ok", func() {
+			isLaunched = false
+			isTerminated = true
+		})
+	}
 }
 
 func errTest(writer http.ResponseWriter, _ *http.Request) {
@@ -241,6 +233,7 @@ func newServer(mux *http.ServeMux, host, port string) *http.Server {
 	}
 }
 
+
 func main() {
 	idleConnsClosed := make(chan struct{})
 	mux := http.NewServeMux()
@@ -248,17 +241,20 @@ func main() {
 	mux.HandleFunc("/status-x", Get(initial))
 	mux.HandleFunc("/launch", Post(launch))
 	mux.HandleFunc("/terminate", Post(terminate))
-	mux.HandleFunc("/launched", Post(launched))
-	mux.HandleFunc("/terminated", Post(terminated))
+
 	mux.HandleFunc("/err", Get(errTest))
 	host := EnvOrDefault("HOST", "0.0.0.0")
 	port := EnvOrDefault("PORT", "9443")
 	server, fS := configureServer(mux, host, port)
 
 	broker := sse.NewBroker()
+
+
 	muxE := http.NewServeMux()
 	muxE.Handle("/listen", broker)
 	muxE.HandleFunc("/event", broker.Event)
+	muxE.HandleFunc("/terminated", Post(terminated(broker)))
+	muxE.HandleFunc("/launched", Post(launched(broker)))
 	portE := EnvOrDefault("PORT_E", "9444")
 	serverE, fE := configureServer(muxE, host, portE)
 

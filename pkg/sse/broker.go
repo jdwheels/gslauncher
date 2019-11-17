@@ -1,6 +1,8 @@
 package sse
 
 import (
+	status2 "defilade.io/gslauncher/pkg/status"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -81,8 +83,29 @@ func (broker *Broker) listen() {
 func (broker *Broker) Event(writer http.ResponseWriter, request *http.Request) {
 	eventString := fmt.Sprintf("the time is %v", time.Now())
 	log.Println("Receiving event")
-	broker.Notifier <- []byte(eventString)
+	b, err := SimpleEventBytes(eventString)
+	if err != nil {
+		log.Printf("Error marshalling event %v", err)
+	} else {
+		broker.Notifier <- b
+	}
 }
+
+func SimpleEventBytes(s string) (b []byte, err error)  {
+	return json.Marshal(status2.NewLaunchResponse(s))
+}
+
+func (broker *Broker) SimpleEvent(status string)  {
+	event := status2.NewLaunchResponse(status)
+	log.Printf("Receiving event %+v", event)
+	b, err := json.Marshal(event)
+	if err != nil {
+		log.Printf("Error marshalling event %v", err)
+	} else {
+		broker.Notifier <- b
+	}
+}
+
 
 func NewBroker() (broker *Broker) {
 	broker = &Broker{
