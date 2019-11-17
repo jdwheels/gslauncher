@@ -91,11 +91,11 @@ func (broker *Broker) Event(writer http.ResponseWriter, request *http.Request) {
 	}
 }
 
-func SimpleEventBytes(s string) (b []byte, err error)  {
+func SimpleEventBytes(s string) (b []byte, err error) {
 	return json.Marshal(status2.NewLaunchResponse(s))
 }
 
-func (broker *Broker) SimpleEvent(status string)  {
+func (broker *Broker) SimpleEvent(status string) {
 	event := status2.NewLaunchResponse(status)
 	log.Printf("Receiving event %+v", event)
 	b, err := json.Marshal(event)
@@ -105,7 +105,6 @@ func (broker *Broker) SimpleEvent(status string)  {
 		broker.Notifier <- b
 	}
 }
-
 
 func NewBroker() (broker *Broker) {
 	broker = &Broker{

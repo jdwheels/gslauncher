@@ -76,6 +76,11 @@ var AllowedOrigins = &[]string{
 }
 
 func initial(writer http.ResponseWriter, _ *http.Request) {
+	count, status, err := x.CheckIt(clusterName)
+	if err == nil {
+		isLaunched = count > 0 && status == "InService"
+		isTerminated = count == 0 || status == "Terminating:Proceed"
+	}
 	writeJson(&writer, status2.ExtendedLaunchResponse{
 		Status:       "N/A",
 		IsLaunched:   isLaunched,
@@ -233,7 +238,6 @@ func newServer(mux *http.ServeMux, host, port string) *http.Server {
 	}
 }
 
-
 func main() {
 	idleConnsClosed := make(chan struct{})
 	mux := http.NewServeMux()
@@ -249,7 +253,6 @@ func main() {
 
 	broker := sse.NewBroker()
 
-
 	muxE := http.NewServeMux()
 	muxE.Handle("/listen", broker)
 	muxE.HandleFunc("/event", broker.Event)
@@ -263,9 +266,8 @@ func main() {
 	go HandleClose(idleConnsClosed, servers)
 
 	fs := []*func() error{&fS, &fE}
-	log.Print(len(fs))
-	for i := 0; i < len(fs); i++  {
-		log.Print(i)
+
+	for i := 0; i < len(fs); i++ {
 		f := fs[i]
 		go func() {
 			err := (*f)()
