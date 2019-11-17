@@ -14,6 +14,7 @@ RUN go mod download
 RUN go mod verify
 
 COPY main.go .
+COPY sse sse
 
 RUN GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /go/bin/gslauncher
 
@@ -26,4 +27,4 @@ USER appuser
 
 ENTRYPOINT ["/go/bin/gslauncher"]
 
-EXPOSE 9443
+EXPOSE 9443 9444
