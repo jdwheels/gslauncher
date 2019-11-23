@@ -2,11 +2,12 @@ package main
 
 import (
 	"context"
+	_aws "defilade.io/gslauncher/pkg/aws"
 	"defilade.io/gslauncher/pkg/sse"
-	status2 "defilade.io/gslauncher/pkg/status"
-	"encoding/json"
-	"fmt"
-	x "github.com/jdwheels/xaws/pkg/ec2"
+	_status "defilade.io/gslauncher/pkg/status"
+	"defilade.io/gslauncher/pkg/utils"
+	"defilade.io/gslauncher/pkg/web"
+	xaws "github.com/jdwheels/xaws/pkg/ec2"
 	"golang.org/x/net/http2"
 	"log"
 	"net/http"
@@ -18,70 +19,17 @@ import (
 	"time"
 )
 
-func EnvOrDefault(key, def string) string {
-	if val, ok := os.LookupEnv(key); !ok {
-		return def
-	} else {
-		return val
-	}
-}
-
-const ContentType = "Content-Type"
-const ApplicationJson = "application/json"
-
-func GetRequestOrigin(request *http.Request) string {
-	return (*request).Header.Get("Origin")
-}
-
-func setupResponse(w *http.ResponseWriter, req *http.Request) {
-	for _, allowedOrigin := range *AllowedOrigins {
-		if allowedOrigin == GetRequestOrigin(req) {
-			(*w).Header().Set("Access-Control-Allow-Origin", allowedOrigin)
-			(*w).Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
-			(*w).Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
-		}
-	}
-}
-
-func Method(method string, handlerFunc http.HandlerFunc) http.HandlerFunc {
-	return func(writer http.ResponseWriter, request *http.Request) {
-		setupResponse(&writer, request)
-		switch request.Method {
-		case http.MethodOptions:
-		case method:
-			handlerFunc(writer, request)
-		default:
-			writer.WriteHeader(http.StatusMethodNotAllowed)
-		}
-	}
-}
-
-func Get(handlerFunc http.HandlerFunc) http.HandlerFunc {
-	return Method(http.MethodGet, handlerFunc)
-}
-
-func Post(handlerFunc http.HandlerFunc) http.HandlerFunc {
-	return Method(http.MethodPost, handlerFunc)
-}
-
-func Options(handlerFunc http.HandlerFunc) http.HandlerFunc {
-	return Method(http.MethodOptions, handlerFunc)
-}
-
-var AllowedOrigins = &[]string{
-	"https://localhost:3443",
-	EnvOrDefault("FRONTEND_ORIGIN_LOCAL", "https://localhost:8443"),
-	"https://mars.local:3443",
-	EnvOrDefault("FRONTEND_ORIGIN", "https://mars.local:8443"),
-}
+var isTerminated = true
+var isLaunched = false
+var clusterName = utils.EnvOrDefault("CLUSTER_NAME", "EC2ContainerService-game-servers-2-EcsInstanceAsg-9AB2NHDSISGL")
 
 func initial(writer http.ResponseWriter, _ *http.Request) {
-	count, status, err := x.CheckIt(clusterName)
+	count, status, err := xaws.CheckIt(clusterName)
 	if err == nil {
 		isLaunched = count > 0 && status == "InService"
 		isTerminated = count == 0 || status == "Terminating:Proceed"
 	}
-	writeJson(&writer, status2.ExtendedLaunchResponse{
+	web.WriteJson(&writer, _status.ExtendedLaunchResponse{
 		Status:       "N/A",
 		IsLaunched:   isLaunched,
 		IsTerminated: isTerminated,
@@ -89,50 +37,8 @@ func initial(writer http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-var isTerminated = true
-var isLaunched = false
-var clusterName = EnvOrDefault("CLUSTER_NAME", "EC2ContainerService-game-servers-2-EcsInstanceAsg-9AB2NHDSISGL")
-var isProd = EnvOrDefault("GOENV", "dev") == "production"
-
-func awsAction(writer *http.ResponseWriter, action func(string) bool, status string, toggle func()) {
-	if success := actionWrapper(clusterName, action); success {
-		toggle()
-		writeJson(writer, status2.NewLaunchResponse(status))
-	} else {
-		(*writer).WriteHeader(http.StatusInternalServerError)
-	}
-}
-
-func actionWrapper(target string, action func(string) bool) bool {
-	log.Printf("GOENV => %s => isProd => %t", EnvOrDefault("GOENV", "dev"), isProd)
-	if isProd {
-		return action(target)
-	}
-	return dryAction(target)
-}
-
-func dryAction(target string) bool {
-	log.Printf("Simulating action on '%s'", target)
-	return true
-}
-
-func awsEvent(writer *http.ResponseWriter, status string, toggle func()) {
-	toggle()
-	writeJson(writer, status2.NewLaunchResponse(status))
-}
-
-func writeJson(writer *http.ResponseWriter, body interface{}) {
-	(*writer).Header().Set(ContentType, ApplicationJson)
-	jsonBody, err := json.Marshal(body)
-	if err != nil {
-		(*writer).WriteHeader(http.StatusInternalServerError)
-	} else if _, err = (*writer).Write(jsonBody); err != nil {
-		(*writer).WriteHeader(http.StatusInternalServerError)
-	}
-}
-
 func launch(writer http.ResponseWriter, _ *http.Request) {
-	awsAction(&writer, x.StartEC2Cluster, "Pending", func() {
+	_aws.Action(&writer, clusterName, xaws.StartEC2Cluster, "Pending", func() {
 		isLaunched = false
 		isTerminated = false
 	})
@@ -141,7 +47,7 @@ func launch(writer http.ResponseWriter, _ *http.Request) {
 func launched(broker *sse.Broker) http.HandlerFunc {
 	return func(writer http.ResponseWriter, _ *http.Request) {
 		broker.SimpleEvent("launched")
-		awsEvent(&writer, "Ok", func() {
+		_aws.Event(&writer, "Ok", func() {
 			isTerminated = false
 			isLaunched = true
 		})
@@ -149,7 +55,7 @@ func launched(broker *sse.Broker) http.HandlerFunc {
 }
 
 func terminate(writer http.ResponseWriter, _ *http.Request) {
-	awsAction(&writer, x.StopEC2Cluster, "Terminating", func() {
+	_aws.Action(&writer, clusterName, xaws.StopEC2Cluster, "Terminating", func() {
 		isTerminated = false
 		isLaunched = false
 	})
@@ -158,7 +64,7 @@ func terminate(writer http.ResponseWriter, _ *http.Request) {
 func terminated(broker *sse.Broker) http.HandlerFunc {
 	return func(writer http.ResponseWriter, _ *http.Request) {
 		broker.SimpleEvent("terminated")
-		awsEvent(&writer, "Ok", func() {
+		_aws.Event(&writer, "Ok", func() {
 			isLaunched = false
 			isTerminated = true
 		})
@@ -169,13 +75,6 @@ func errTest(writer http.ResponseWriter, _ *http.Request) {
 	writer.WriteHeader(http.StatusBadRequest)
 }
 
-func logRequest(handler http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("%s \"%s %s\" \"%s\"\n", r.RemoteAddr, r.Method, r.URL, r.UserAgent())
-		handler.ServeHTTP(w, r)
-	})
-}
-
 func configureHttp2Server(server *http.Server) (f func() error, err error) {
 	conf2 := http2.Server{}
 
@@ -183,8 +82,8 @@ func configureHttp2Server(server *http.Server) (f func() error, err error) {
 		log.Fatalf("HTTP2 error %s", err)
 	}
 
-	certDir := EnvOrDefault("CERT_DIR", "/home/john/algo/wpr/certs")
-	certName := EnvOrDefault("CERT_NAME", "selfsigned")
+	certDir := utils.EnvOrDefault("CERT_DIR", "/home/john/algo/wpr/certs")
+	certName := utils.EnvOrDefault("CERT_NAME", "selfsigned")
 	cert := path.Join(certDir, certName)
 	f = func() error {
 		return server.ListenAndServeTLS(cert+".crt", cert+".key")
@@ -193,9 +92,9 @@ func configureHttp2Server(server *http.Server) (f func() error, err error) {
 }
 
 func configureServer(mux *http.ServeMux, host, port string) (server *http.Server, f func() error) {
-	server = newServer(mux, host, port)
+	server = web.NewServer(mux, host, port)
 
-	useHttp2, _ := strconv.ParseBool(EnvOrDefault("USE_HTTP2", "true"))
+	useHttp2, _ := strconv.ParseBool(utils.EnvOrDefault("USE_HTTP2", "true"))
 
 	if useHttp2 {
 		var err error
@@ -211,7 +110,7 @@ func configureServer(mux *http.ServeMux, host, port string) (server *http.Server
 	return
 }
 
-func HandleClose(idleConnsClosed chan struct{}, servers []*http.Server) {
+func handleClose(idleConnsClosed chan struct{}, servers []*http.Server) {
 	sigint := make(chan os.Signal, 1)
 
 	signal.Notify(sigint, os.Interrupt, syscall.SIGTERM)
@@ -231,24 +130,17 @@ func HandleClose(idleConnsClosed chan struct{}, servers []*http.Server) {
 	close(idleConnsClosed)
 }
 
-func newServer(mux *http.ServeMux, host, port string) *http.Server {
-	return &http.Server{
-		Addr:    fmt.Sprintf("%s:%s", host, port),
-		Handler: logRequest(mux),
-	}
-}
-
 func main() {
 	idleConnsClosed := make(chan struct{})
 	mux := http.NewServeMux()
-	mux.HandleFunc("/status", Get(initial))
-	mux.HandleFunc("/status-x", Get(initial))
-	mux.HandleFunc("/launch", Post(launch))
-	mux.HandleFunc("/terminate", Post(terminate))
+	mux.HandleFunc("/status", web.Get(initial))
+	mux.HandleFunc("/status-x", web.Get(initial))
+	mux.HandleFunc("/launch", web.Post(launch))
+	mux.HandleFunc("/terminate", web.Post(terminate))
 
-	mux.HandleFunc("/err", Get(errTest))
-	host := EnvOrDefault("HOST", "0.0.0.0")
-	port := EnvOrDefault("PORT", "9443")
+	mux.HandleFunc("/err", web.Get(errTest))
+	host := utils.EnvOrDefault("HOST", "0.0.0.0")
+	port := utils.EnvOrDefault("PORT", "9443")
 	server, fS := configureServer(mux, host, port)
 
 	broker := sse.NewBroker()
@@ -256,14 +148,14 @@ func main() {
 	muxE := http.NewServeMux()
 	muxE.Handle("/listen", broker)
 	muxE.HandleFunc("/event", broker.Event)
-	muxE.HandleFunc("/terminated", Post(terminated(broker)))
-	muxE.HandleFunc("/launched", Post(launched(broker)))
-	portE := EnvOrDefault("PORT_E", "9444")
+	muxE.HandleFunc("/terminated", web.Post(terminated(broker)))
+	muxE.HandleFunc("/launched", web.Post(launched(broker)))
+	portE := utils.EnvOrDefault("PORT_E", "9444")
 	serverE, fE := configureServer(muxE, host, portE)
 
 	servers := []*http.Server{server, serverE}
 
-	go HandleClose(idleConnsClosed, servers)
+	go handleClose(idleConnsClosed, servers)
 
 	fs := []*func() error{&fS, &fE}
 

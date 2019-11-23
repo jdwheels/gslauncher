@@ -73,7 +73,7 @@ func (broker *Broker) listen() {
 			delete(broker.clients, s)
 			log.Printf("Removed client. %d registered clients", len(broker.clients))
 		case event := <-broker.Notifier:
-			for clientMessageChan, _ := range broker.clients {
+			for clientMessageChan := range broker.clients {
 				clientMessageChan <- event
 			}
 		}
