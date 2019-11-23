@@ -23,6 +23,11 @@ var isTerminated = true
 var isLaunched = false
 var clusterName = utils.EnvOrDefault("CLUSTER_NAME", "EC2ContainerService-game-servers-2-EcsInstanceAsg-9AB2NHDSISGL")
 
+var clusterNames = map[string]string {
+	"arma": "EC2ContainerService-game-servers-2-EcsInstanceAsg-9AB2NHDSISGL",
+	"mumble": "asg-docker-mumble",
+}
+
 func initial(writer http.ResponseWriter, _ *http.Request) {
 	count, status, err := xaws.CheckIt(clusterName)
 	if err == nil {
@@ -130,6 +135,14 @@ func handleClose(idleConnsClosed chan struct{}, servers []*http.Server) {
 	close(idleConnsClosed)
 }
 
+func clusters(writer http.ResponseWriter, _ *http.Request)  {
+	var names []string
+	for name := range clusterNames {
+		names = append(names, name)
+	}
+	web.WriteJson(&writer, names)
+}
+
 func main() {
 	idleConnsClosed := make(chan struct{})
 	mux := http.NewServeMux()
@@ -137,6 +150,7 @@ func main() {
 	mux.HandleFunc("/status-x", web.Get(initial))
 	mux.HandleFunc("/launch", web.Post(launch))
 	mux.HandleFunc("/terminate", web.Post(terminate))
+	mux.HandleFunc("/clusters", web.Get(clusters))
 
 	mux.HandleFunc("/err", web.Get(errTest))
 	host := utils.EnvOrDefault("HOST", "0.0.0.0")
