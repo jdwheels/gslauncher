@@ -69,6 +69,17 @@ func WriteJson(writer *http.ResponseWriter, body interface{}) {
 	}
 }
 
+func ReadJson(r *http.Request, target interface{}) (err error) {
+	d := json.NewDecoder(r.Body)
+	defer func() {
+		if xErr := r.Body.Close(); xErr != nil {
+			err = xErr
+		}
+	}()
+	err = d.Decode(target)
+	return
+}
+
 func LogRequest(handler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("%s \"%s %s\" \"%s\"\n", r.RemoteAddr, r.Method, r.URL, r.UserAgent())
@@ -76,9 +87,9 @@ func LogRequest(handler http.Handler) http.Handler {
 	})
 }
 
-func NewServer(mux *http.ServeMux, host, port string) *http.Server {
+func NewServer(handler http.Handler, host, port string) *http.Server {
 	return &http.Server{
 		Addr:    fmt.Sprintf("%s:%s", host, port),
-		Handler: LogRequest(mux),
+		Handler: LogRequest(handler),
 	}
 }

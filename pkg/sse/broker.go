@@ -1,12 +1,13 @@
 package sse
 
 import (
-	status2 "defilade.io/gslauncher/pkg/status"
+	_status "defilade.io/gslauncher/pkg/status"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"time"
+	//"time"
 )
 
 const (
@@ -92,11 +93,11 @@ func (broker *Broker) Event(writer http.ResponseWriter, request *http.Request) {
 }
 
 func SimpleEventBytes(s string) (b []byte, err error) {
-	return json.Marshal(status2.NewLaunchResponse(s))
+	return json.Marshal(_status.NewLaunchResponse("x", s))
 }
 
-func (broker *Broker) SimpleEvent(status string) {
-	event := status2.NewLaunchResponse(status)
+func (broker *Broker) SimpleEvent(context, status string) {
+	event := _status.NewLaunchResponse(context, status)
 	log.Printf("Receiving event %+v", event)
 	b, err := json.Marshal(event)
 	if err != nil {

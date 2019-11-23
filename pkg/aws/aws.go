@@ -23,16 +23,20 @@ func dryAction(target string) bool {
 	return true
 }
 
-func Event(writer *http.ResponseWriter, status string, toggle func()) {
+func Event(writer *http.ResponseWriter, target string, status string, toggle func()) {
 	toggle()
-	web.WriteJson(writer, _status.NewLaunchResponse(status))
+	web.WriteJson(writer, _status.NewLaunchResponse(target, status))
 }
 
 func Action(writer *http.ResponseWriter, target string, action func(string) bool, status string, toggle func()) {
 	if success := actionWrapper(target, action); success {
 		toggle()
-		web.WriteJson(writer, _status.NewLaunchResponse(status))
+		web.WriteJson(writer, _status.NewLaunchResponse(target, status))
 	} else {
 		(*writer).WriteHeader(http.StatusInternalServerError)
 	}
+}
+
+type LambdaBody struct {
+	Asg string `json:"asg"`
 }

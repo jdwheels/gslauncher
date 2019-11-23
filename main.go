@@ -7,6 +7,7 @@ import (
 	_status "defilade.io/gslauncher/pkg/status"
 	"defilade.io/gslauncher/pkg/utils"
 	"defilade.io/gslauncher/pkg/web"
+	"github.com/gorilla/mux"
 	xaws "github.com/jdwheels/xaws/pkg/ec2"
 	"golang.org/x/net/http2"
 	"log"
@@ -21,14 +22,29 @@ import (
 
 var isTerminated = true
 var isLaunched = false
-var clusterName = utils.EnvOrDefault("CLUSTER_NAME", "EC2ContainerService-game-servers-2-EcsInstanceAsg-9AB2NHDSISGL")
 
-var clusterNames = map[string]string {
-	"arma": "EC2ContainerService-game-servers-2-EcsInstanceAsg-9AB2NHDSISGL",
-	"mumble": "asg-docker-mumble",
+//var clusterName = utils.EnvOrDefault("CLUSTER_NAME", "EC2ContainerService-game-servers-2-EcsInstanceAsg-9AB2NHDSISGL")
+
+var clusterNames = map[string]string{
+	"arma":    "EC2ContainerService-game-servers-2-EcsInstanceAsg-9AB2NHDSISGL",
+	"mumble":  "asg-docker-mumble",
+	"mumble2": "asg-docker-mumble",
 }
 
-func initial(writer http.ResponseWriter, _ *http.Request) {
+func getClusterName(writer http.ResponseWriter, req *http.Request) (name string, err error) {
+	vars := mux.Vars(req)
+	name, ok := clusterNames[vars["name"]]
+	if !ok {
+		writer.WriteHeader(http.StatusBadRequest)
+	}
+	return
+}
+
+func initial(writer http.ResponseWriter, req *http.Request) {
+	clusterName, err := getClusterName(writer, req)
+	if err != nil {
+		return
+	}
 	count, status, err := xaws.CheckIt(clusterName)
 	if err == nil {
 		isLaunched = count > 0 && status == "InService"
@@ -42,24 +58,62 @@ func initial(writer http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func launch(writer http.ResponseWriter, _ *http.Request) {
+func launch(writer http.ResponseWriter, req *http.Request) {
+	clusterName, err := getClusterName(writer, req)
+	if err != nil {
+		return
+	}
 	_aws.Action(&writer, clusterName, xaws.StartEC2Cluster, "Pending", func() {
 		isLaunched = false
 		isTerminated = false
 	})
 }
 
+func handleAwsBody(req *http.Request) (name string, err error) {
+	body := &_aws.LambdaBody{}
+	err = web.ReadJson(req, body)
+	if err != nil {
+		log.Printf("Error parsing body %v", err)
+		return
+	}
+	name, found := findContextName(body)
+	if !found {
+		log.Printf("Error finding context from asg %s", body.Asg)
+	}
+	return
+}
+
+func findContextName(a *_aws.LambdaBody) (name string, found bool) {
+	found = false
+	for k, v := range clusterNames {
+		if v == a.Asg {
+			name = k
+			found = true
+			break
+		}
+	}
+	return
+}
+
 func launched(broker *sse.Broker) http.HandlerFunc {
-	return func(writer http.ResponseWriter, _ *http.Request) {
-		broker.SimpleEvent("launched")
-		_aws.Event(&writer, "Ok", func() {
+	return func(writer http.ResponseWriter, req *http.Request) {
+		n, err := handleAwsBody(req)
+		if err != nil {
+			return
+		}
+		broker.SimpleEvent(n, "launched")
+		_aws.Event(&writer, n, "Ok", func() {
 			isTerminated = false
 			isLaunched = true
 		})
 	}
 }
 
-func terminate(writer http.ResponseWriter, _ *http.Request) {
+func terminate(writer http.ResponseWriter, req *http.Request) {
+	clusterName, err := getClusterName(writer, req)
+	if err != nil {
+		return
+	}
 	_aws.Action(&writer, clusterName, xaws.StopEC2Cluster, "Terminating", func() {
 		isTerminated = false
 		isLaunched = false
@@ -67,9 +121,13 @@ func terminate(writer http.ResponseWriter, _ *http.Request) {
 }
 
 func terminated(broker *sse.Broker) http.HandlerFunc {
-	return func(writer http.ResponseWriter, _ *http.Request) {
-		broker.SimpleEvent("terminated")
-		_aws.Event(&writer, "Ok", func() {
+	return func(writer http.ResponseWriter, req *http.Request) {
+		n, err := handleAwsBody(req)
+		if err != nil {
+			return
+		}
+		broker.SimpleEvent(n, "terminated")
+		_aws.Event(&writer, n, "Ok", func() {
 			isLaunched = false
 			isTerminated = true
 		})
@@ -96,8 +154,8 @@ func configureHttp2Server(server *http.Server) (f func() error, err error) {
 	return
 }
 
-func configureServer(mux *http.ServeMux, host, port string) (server *http.Server, f func() error) {
-	server = web.NewServer(mux, host, port)
+func configureServer(handler http.Handler, host, port string) (server *http.Server, f func() error) {
+	server = web.NewServer(handler, host, port)
 
 	useHttp2, _ := strconv.ParseBool(utils.EnvOrDefault("USE_HTTP2", "true"))
 
@@ -135,7 +193,7 @@ func handleClose(idleConnsClosed chan struct{}, servers []*http.Server) {
 	close(idleConnsClosed)
 }
 
-func clusters(writer http.ResponseWriter, _ *http.Request)  {
+func clusters(writer http.ResponseWriter, _ *http.Request) {
 	var names []string
 	for name := range clusterNames {
 		names = append(names, name)
@@ -145,17 +203,18 @@ func clusters(writer http.ResponseWriter, _ *http.Request)  {
 
 func main() {
 	idleConnsClosed := make(chan struct{})
-	mux := http.NewServeMux()
-	mux.HandleFunc("/status", web.Get(initial))
-	mux.HandleFunc("/status-x", web.Get(initial))
-	mux.HandleFunc("/launch", web.Post(launch))
-	mux.HandleFunc("/terminate", web.Post(terminate))
-	mux.HandleFunc("/clusters", web.Get(clusters))
+	muxS := mux.NewRouter()
+	s := muxS.PathPrefix("/servers/{name}").Subrouter()
+	s.HandleFunc("/status", web.Get(initial))
+	s.HandleFunc("/status-x", web.Get(initial))
+	s.HandleFunc("/launch", web.Post(launch))
+	s.HandleFunc("/terminate", web.Post(terminate))
+	muxS.HandleFunc("/clusters", web.Get(clusters))
 
-	mux.HandleFunc("/err", web.Get(errTest))
+	muxS.HandleFunc("/err", web.Get(errTest))
 	host := utils.EnvOrDefault("HOST", "0.0.0.0")
 	port := utils.EnvOrDefault("PORT", "9443")
-	server, fS := configureServer(mux, host, port)
+	server, fS := configureServer(muxS, host, port)
 
 	broker := sse.NewBroker()
 
