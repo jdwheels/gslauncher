@@ -25,15 +25,19 @@ var isLaunched = false
 
 //var clusterName = utils.EnvOrDefault("CLUSTER_NAME", "EC2ContainerService-game-servers-2-EcsInstanceAsg-9AB2NHDSISGL")
 
-var clusterNames = map[string]string{
-	"arma":    "EC2ContainerService-game-servers-2-EcsInstanceAsg-9AB2NHDSISGL",
-	"mumble":  "asg-docker-mumble",
-	"mumble2": "asg-docker-mumble",
+type ServerConfig struct {
+	AutoScalingGroup string
+	Domain string
 }
 
-func getClusterName(writer http.ResponseWriter, req *http.Request) (name string, err error) {
+var clusterNames = map[string]*ServerConfig{
+	"arma":    {"EC2ContainerService-game-servers-2-EcsInstanceAsg-9AB2NHDSISGL", "arma.defilade.io"},
+	"mumble":  {"asg-docker-mumble", "mumble2.defilade.io"},
+}
+
+func getServerConfig(writer http.ResponseWriter, req *http.Request) (config *ServerConfig, err error) {
 	vars := mux.Vars(req)
-	name, ok := clusterNames[vars["name"]]
+	config, ok := clusterNames[vars["name"]]
 	if !ok {
 		writer.WriteHeader(http.StatusBadRequest)
 	}
@@ -41,11 +45,11 @@ func getClusterName(writer http.ResponseWriter, req *http.Request) (name string,
 }
 
 func initial(writer http.ResponseWriter, req *http.Request) {
-	clusterName, err := getClusterName(writer, req)
+	config, err := getServerConfig(writer, req)
 	if err != nil {
 		return
 	}
-	count, status, err := xaws.CheckIt(clusterName)
+	count, status, err := xaws.CheckIt(config.AutoScalingGroup)
 	if err == nil {
 		isLaunched = count > 0 && status == "InService"
 		isTerminated = count == 0 || status == "Terminating:Proceed"
@@ -59,11 +63,11 @@ func initial(writer http.ResponseWriter, req *http.Request) {
 }
 
 func launch(writer http.ResponseWriter, req *http.Request) {
-	clusterName, err := getClusterName(writer, req)
+	config, err := getServerConfig(writer, req)
 	if err != nil {
 		return
 	}
-	_aws.Action(&writer, clusterName, xaws.StartEC2Cluster, "Pending", func() {
+	_aws.Action(&writer, config.AutoScalingGroup, xaws.StartEC2Cluster, "Pending", func() {
 		isLaunched = false
 		isTerminated = false
 	})
@@ -86,7 +90,7 @@ func handleAwsBody(req *http.Request) (name string, err error) {
 func findContextName(a *_aws.LambdaBody) (name string, found bool) {
 	found = false
 	for k, v := range clusterNames {
-		if v == a.Asg {
+		if v.AutoScalingGroup == a.Asg {
 			name = k
 			found = true
 			break
@@ -110,11 +114,11 @@ func launched(broker *sse.Broker) http.HandlerFunc {
 }
 
 func terminate(writer http.ResponseWriter, req *http.Request) {
-	clusterName, err := getClusterName(writer, req)
+	config, err := getServerConfig(writer, req)
 	if err != nil {
 		return
 	}
-	_aws.Action(&writer, clusterName, xaws.StopEC2Cluster, "Terminating", func() {
+	_aws.Action(&writer, config.AutoScalingGroup, xaws.StopEC2Cluster, "Terminating", func() {
 		isTerminated = false
 		isLaunched = false
 	})
