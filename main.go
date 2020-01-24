@@ -27,12 +27,12 @@ var isLaunched = false
 
 type ServerConfig struct {
 	AutoScalingGroup string
-	Domain string
+	Domain           string
 }
 
 var clusterNames = map[string]*ServerConfig{
-	"arma":    {"EC2ContainerService-game-servers-2-EcsInstanceAsg-9AB2NHDSISGL", "arma.defilade.io"},
-	"mumble":  {"asg-docker-mumble", "mumble2.defilade.io"},
+	"arma":   {"EC2ContainerService-game-servers-2-EcsInstanceAsg-9AB2NHDSISGL", "arma.defilade.io"},
+	"mumble": {"asg-docker-mumble", "mumble2.defilade.io"},
 }
 
 func getServerConfig(writer http.ResponseWriter, req *http.Request) (config *ServerConfig, err error) {
