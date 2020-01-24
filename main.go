@@ -149,8 +149,8 @@ func configureHttp2Server(server *http.Server) (f func() error, err error) {
 		log.Fatalf("HTTP2 error %s", err)
 	}
 
-	certDir := utils.EnvOrDefault("CERT_DIR", "/home/john/algo/wpr/certs")
-	certName := utils.EnvOrDefault("CERT_NAME", "selfsigned")
+	certDir := utils.EnvOrDefault("CERT_DIR", "/home/john/Projects/cert-scripts")
+	certName := utils.EnvOrDefault("CERT_NAME", "ss3")
 	cert := path.Join(certDir, certName)
 	f = func() error {
 		return server.ListenAndServeTLS(cert+".crt", cert+".key")
