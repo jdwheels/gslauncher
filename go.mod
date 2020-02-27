@@ -1,9 +1,9 @@
 module defilade.io/gslauncher
 
-go 1.13
+go 1.14
 
 require (
-	github.com/gorilla/mux v1.7.3
-	github.com/jdwheels/xaws v0.0.0-20200130130111-f40329c005ea
-	golang.org/x/net v0.0.0-20200114155413-6afb5195e5aa
+	github.com/gorilla/mux v1.7.4
+	github.com/jdwheels/xaws v0.0.0-20200227123641-bda3ecc27e14
+	golang.org/x/net v0.0.0-20200226121028-0de0cce0169b
 )
