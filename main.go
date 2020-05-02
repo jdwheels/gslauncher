@@ -149,7 +149,7 @@ func configureHttp2Server(server *http.Server) (f func() error, err error) {
 		log.Fatalf("HTTP2 error %s", err)
 	}
 
-	certDir := utils.EnvOrDefault("CERT_DIR", "/home/john/Projects/cert-scripts")
+	certDir := utils.EnvOrDefault("CERT_DIR", "/home/john/Projects/cert-scripts/out/ss3")
 	certName := utils.EnvOrDefault("CERT_NAME", "ss3")
 	cert := path.Join(certDir, certName)
 	f = func() error {
