@@ -4,6 +4,6 @@ go 1.14
 
 require (
 	github.com/gorilla/mux v1.7.4
-	github.com/jdwheels/xaws v0.0.0-20200704155444-2a6abbf38aea
-	golang.org/x/net v0.0.0-20200625001655-4c5254603344
+	github.com/jdwheels/xaws v0.0.0-20200715142313-b6ffa463d9dd
+	golang.org/x/net v0.0.0-20200707034311-ab3426394381
 )
