@@ -2,9 +2,13 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	x "github.com/jdwheels/xaws/pkg/ec2"
+	_aws "defilade.io/gslauncher/pkg/aws"
+	"defilade.io/gslauncher/pkg/sse"
+	_status "defilade.io/gslauncher/pkg/status"
+	"defilade.io/gslauncher/pkg/utils"
+	"defilade.io/gslauncher/pkg/web"
+	"github.com/gorilla/mux"
+	xaws "github.com/jdwheels/xaws/pkg/ec2"
 	"golang.org/x/net/http2"
 	"log"
 	"net/http"
@@ -16,227 +20,233 @@ import (
 	"time"
 )
 
-func EnvOrDefault(key, def string) string {
-	if val, ok := os.LookupEnv(key); !ok {
-		return def
-	} else {
-		return val
-	}
-}
-
-type LaunchResponse struct {
-	Status string `json:"status"`
-}
-
-type ExtendedLaunchResponse struct {
-	Status       string `json:"status"`
-	IsLaunched   bool   `json:"is_launched"`
-	IsTerminated bool   `json:"is_terminated"`
-	Date         int64  `json:"date"`
-}
-
-func NewLaunchResponse(status string) *LaunchResponse {
-	return &LaunchResponse{Status: status}
-}
-
-const ContentType = "Content-Type"
-const ApplicationJson = "application/json"
-
-func GetRequestOrigin(request *http.Request) string {
-	return (*request).Header.Get("Origin")
-}
-
-func setupResponse(w *http.ResponseWriter, req *http.Request) {
-	for _, allowedOrigin := range *AllowedOrigins {
-		if allowedOrigin == GetRequestOrigin(req) {
-			(*w).Header().Set("Access-Control-Allow-Origin", allowedOrigin)
-			(*w).Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
-			(*w).Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
-		}
-	}
-}
-
-func Method(method string, handlerFunc http.HandlerFunc) http.HandlerFunc {
-	return func(writer http.ResponseWriter, request *http.Request) {
-		setupResponse(&writer, request)
-		switch request.Method {
-		case http.MethodOptions:
-		case method:
-			handlerFunc(writer, request)
-		default:
-			writer.WriteHeader(http.StatusMethodNotAllowed)
-		}
-	}
-}
-
-func Get(handlerFunc http.HandlerFunc) http.HandlerFunc {
-	return Method(http.MethodGet, handlerFunc)
-}
-
-func Post(handlerFunc http.HandlerFunc) http.HandlerFunc {
-	return Method(http.MethodPost, handlerFunc)
-}
-
-func Options(handlerFunc http.HandlerFunc) http.HandlerFunc {
-	return Method(http.MethodOptions, handlerFunc)
-}
-
-var AllowedOrigins = &[]string{
-	"https://localhost:3443",
-	EnvOrDefault("FRONTEND_ORIGIN_LOCAL", "https://localhost:8443"),
-	"https://mars.local:3443",
-	EnvOrDefault("FRONTEND_ORIGIN", "https://mars.local:8443"),
-}
-
-func initial(writer http.ResponseWriter, _ *http.Request) {
-	writeJson(&writer, ExtendedLaunchResponse{
-		"N/A",
-		isLaunched,
-		isTerminated,
-		time.Now().Unix(),
-	})
-}
-
 var isTerminated = true
 var isLaunched = false
-var clusterName = EnvOrDefault("CLUSTER_NAME", "EC2ContainerService-game-servers-2-EcsInstanceAsg-9AB2NHDSISGL")
-var isProd = EnvOrDefault("GOENV", "dev") == "production"
 
-func awsAction(writer *http.ResponseWriter, action func(string) bool, status string, toggle func()) {
-	if success := actionWrapper(clusterName, action); success {
-		toggle()
-		writeJson(writer, NewLaunchResponse(status))
-	} else {
-		(*writer).WriteHeader(http.StatusInternalServerError)
+//var clusterName = utils.EnvOrDefault("CLUSTER_NAME", "EC2ContainerService-game-servers-2-EcsInstanceAsg-9AB2NHDSISGL")
+
+type ServerConfig struct {
+	AutoScalingGroup string
+	Domain           string
+}
+
+var clusterNames = map[string]*ServerConfig{
+	"arma":   {"EC2ContainerService-game-servers-2-EcsInstanceAsg-9AB2NHDSISGL", "arma.defilade.io"},
+	"mumble": {"asg-docker-mumble", "mumble2.defilade.io"},
+}
+
+func getServerConfig(writer http.ResponseWriter, req *http.Request) (config *ServerConfig, err error) {
+	vars := mux.Vars(req)
+	config, ok := clusterNames[vars["name"]]
+	if !ok {
+		writer.WriteHeader(http.StatusBadRequest)
 	}
+	return
 }
 
-func actionWrapper(target string, action func(string) bool) bool {
-	log.Printf("GOENV => %s => isProd => %t", EnvOrDefault("GOENV", "dev"), isProd)
-	if isProd {
-		return action(target)
-	}
-	return dryAction(target)
-}
-
-func dryAction(target string) bool {
-	log.Printf("Simulating action on '%s'", target)
-	return true
-}
-
-func awsEvent(writer *http.ResponseWriter, status string, toggle func()) {
-	toggle()
-	writeJson(writer, NewLaunchResponse(status))
-}
-
-func writeJson(writer *http.ResponseWriter, body interface{}) {
-	(*writer).Header().Set(ContentType, ApplicationJson)
-	jsonBody, err := json.Marshal(body)
+func initial(writer http.ResponseWriter, req *http.Request) {
+	config, err := getServerConfig(writer, req)
 	if err != nil {
-		(*writer).WriteHeader(http.StatusInternalServerError)
-	} else if _, err = (*writer).Write(jsonBody); err != nil {
-		(*writer).WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	count, status, err := xaws.CheckIt(config.AutoScalingGroup)
+	if err == nil {
+		isLaunched = count > 0 && status == "InService"
+		isTerminated = count == 0 || status == "Terminating:Proceed"
+	}
+	web.WriteJson(&writer, _status.ExtendedLaunchResponse{
+		Status:       "N/A",
+		IsLaunched:   isLaunched,
+		IsTerminated: isTerminated,
+		Date:         time.Now().Unix(),
+	})
+}
+
+func launch(writer http.ResponseWriter, req *http.Request) {
+	config, err := getServerConfig(writer, req)
+	if err != nil {
+		return
+	}
+	_aws.Action(&writer, config.AutoScalingGroup, xaws.StartEC2Cluster, "Pending", func() {
+		isLaunched = false
+		isTerminated = false
+	})
+}
+
+func handleAwsBody(req *http.Request) (name string, err error) {
+	body := &_aws.LambdaBody{}
+	err = web.ReadJson(req, body)
+	if err != nil {
+		log.Printf("Error parsing body %v", err)
+		return
+	}
+	name, found := findContextName(body)
+	if !found {
+		log.Printf("Error finding context from asg %s", body.Asg)
+	}
+	return
+}
+
+func findContextName(a *_aws.LambdaBody) (name string, found bool) {
+	found = false
+	for k, v := range clusterNames {
+		if v.AutoScalingGroup == a.Asg {
+			name = k
+			found = true
+			break
+		}
+	}
+	return
+}
+
+func launched(broker *sse.Broker) http.HandlerFunc {
+	return func(writer http.ResponseWriter, req *http.Request) {
+		n, err := handleAwsBody(req)
+		if err != nil {
+			return
+		}
+		broker.SimpleEvent(n, "launched")
+		_aws.Event(&writer, n, "Ok", func() {
+			isTerminated = false
+			isLaunched = true
+		})
 	}
 }
 
-func launch(writer http.ResponseWriter, _ *http.Request) {
-	awsAction(&writer, x.StartEC2Cluster, "Pending", func() {
-		isLaunched = false
-		isTerminated = false
-	})
-}
-
-func launched(writer http.ResponseWriter, _ *http.Request) {
-	awsEvent(&writer, "Ok", func() {
-		isTerminated = false
-		isLaunched = true
-	})
-}
-
-func terminate(writer http.ResponseWriter, _ *http.Request) {
-	awsAction(&writer, x.StopEC2Cluster, "Terminating", func() {
+func terminate(writer http.ResponseWriter, req *http.Request) {
+	config, err := getServerConfig(writer, req)
+	if err != nil {
+		return
+	}
+	_aws.Action(&writer, config.AutoScalingGroup, xaws.StopEC2Cluster, "Terminating", func() {
 		isTerminated = false
 		isLaunched = false
 	})
 }
 
-func terminated(writer http.ResponseWriter, _ *http.Request) {
-	awsEvent(&writer, "Ok", func() {
-		isLaunched = false
-		isTerminated = true
-	})
+func terminated(broker *sse.Broker) http.HandlerFunc {
+	return func(writer http.ResponseWriter, req *http.Request) {
+		n, err := handleAwsBody(req)
+		if err != nil {
+			return
+		}
+		broker.SimpleEvent(n, "terminated")
+		_aws.Event(&writer, n, "Ok", func() {
+			isLaunched = false
+			isTerminated = true
+		})
+	}
 }
 
 func errTest(writer http.ResponseWriter, _ *http.Request) {
 	writer.WriteHeader(http.StatusBadRequest)
 }
 
-func logRequest(handler http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("%s \"%s %s\" \"%s\"\n", r.RemoteAddr, r.Method, r.URL, r.UserAgent())
-		handler.ServeHTTP(w, r)
-	})
+func configureHttp2Server(server *http.Server) (f func() error, err error) {
+	conf2 := http2.Server{}
+
+	if err = http2.ConfigureServer(server, &conf2); err != nil {
+		log.Fatalf("HTTP2 error %s", err)
+	}
+
+	certDir := utils.EnvOrDefault("CERT_DIR", "/home/john/Projects/cert-scripts/out/ss3")
+	certName := utils.EnvOrDefault("CERT_NAME", "ss3")
+	cert := path.Join(certDir, certName)
+	f = func() error {
+		return server.ListenAndServeTLS(cert+".crt", cert+".key")
+	}
+	return
+}
+
+func configureServer(handler http.Handler, host, port string) (server *http.Server, f func() error) {
+	server = web.NewServer(handler, host, port)
+
+	useHttp2, _ := strconv.ParseBool(utils.EnvOrDefault("USE_HTTP2", "true"))
+
+	if useHttp2 {
+		var err error
+		f, err = configureHttp2Server(server)
+		if err != nil {
+			log.Fatalf("Configure error: %v", err)
+		}
+	} else {
+		f = func() error {
+			return server.ListenAndServe()
+		}
+	}
+	return
+}
+
+func handleClose(idleConnsClosed chan struct{}, servers []*http.Server) {
+	sigint := make(chan os.Signal, 1)
+
+	signal.Notify(sigint, os.Interrupt, syscall.SIGTERM)
+
+	<-sigint
+
+	// We received an interrupt signal, shut down.
+	for _, server := range servers {
+		if err := server.Shutdown(context.Background()); err != nil {
+			// Error from closing listeners, or context timeout:
+			log.Printf("HTTP server Shutdown: %v", err)
+		} else {
+			log.Printf("Shutting down...")
+		}
+	}
+
+	close(idleConnsClosed)
+}
+
+func clusters(writer http.ResponseWriter, _ *http.Request) {
+	var names []string
+	for name := range clusterNames {
+		names = append(names, name)
+	}
+	web.WriteJson(&writer, names)
 }
 
 func main() {
 	idleConnsClosed := make(chan struct{})
-	http.HandleFunc("/status", Get(initial))
-	http.HandleFunc("/status-x", Get(initial))
-	http.HandleFunc("/launch", Post(launch))
-	http.HandleFunc("/terminate", Post(terminate))
-	http.HandleFunc("/launched", Post(launched))
-	http.HandleFunc("/terminated", Post(terminated))
-	http.HandleFunc("/err", Get(errTest))
+	muxS := mux.NewRouter()
+	s := muxS.PathPrefix("/servers/{name}").Subrouter()
+	s.HandleFunc("/status", web.Get(initial))
+	s.HandleFunc("/status-x", web.Get(initial))
+	s.HandleFunc("/launch", web.Post(launch))
+	s.HandleFunc("/terminate", web.Post(terminate))
+	muxS.HandleFunc("/clusters", web.Get(clusters))
 
-	var err error
+	muxS.HandleFunc("/err", web.Get(errTest))
+	host := utils.EnvOrDefault("HOST", "0.0.0.0")
+	port := utils.EnvOrDefault("PORT", "9443")
+	server, fS := configureServer(muxS, host, port)
 
-	host := EnvOrDefault("HOST", "0.0.0.0")
-	port := EnvOrDefault("PORT", "9443")
+	broker := sse.NewBroker()
 
-	server := http.Server{
-		Addr:    fmt.Sprintf("%s:%s", host, port),
-		Handler: logRequest(http.DefaultServeMux),
-	}
+	muxE := http.NewServeMux()
+	muxE.Handle("/listen", broker)
+	muxE.HandleFunc("/event", broker.Event)
+	muxE.HandleFunc("/terminated", web.Post(terminated(broker)))
+	muxE.HandleFunc("/launched", web.Post(launched(broker)))
+	portE := utils.EnvOrDefault("PORT_E", "9444")
+	serverE, fE := configureServer(muxE, host, portE)
 
-	go func() {
-		sigint := make(chan os.Signal, 1)
+	servers := []*http.Server{server, serverE}
 
-		// interrupt signal sent from terminal
-		signal.Notify(sigint, os.Interrupt)
-		// sigterm signal sent from kubernetes
-		signal.Notify(sigint, syscall.SIGTERM)
+	go handleClose(idleConnsClosed, servers)
 
-		<-sigint
+	fs := []*func() error{&fS, &fE}
 
-		// We received an interrupt signal, shut down.
-		if err := server.Shutdown(context.Background()); err != nil {
-			// Error from closing listeners, or context timeout:
-			log.Printf("HTTP server Shutdown: %v", err)
-		}
-		close(idleConnsClosed)
-	}()
-
-	useHttp2, _ := strconv.ParseBool(EnvOrDefault("USE_HTTP2", "true"))
-
-	if useHttp2 {
-		conf2 := http2.Server{}
-
-		if err = http2.ConfigureServer(&server, &conf2); err != nil {
-			log.Fatalf("HTTP2 error %s", err)
-		}
-
-		certDir := EnvOrDefault("CERT_DIR", "/home/john/algo/wpr/certs")
-		certName := EnvOrDefault("CERT_NAME", "selfsigned")
-		cert := path.Join(certDir, certName)
-		err = server.ListenAndServeTLS(cert+".crt", cert+".key")
-	} else {
-		err = server.ListenAndServe()
-	}
-
-	if err != nil && err != http.ErrServerClosed {
-		// Error starting or closing listener:
-		log.Printf("HTTP server ListenAndServe: %v", err)
+	for i := 0; i < len(fs); i++ {
+		f := fs[i]
+		go func() {
+			err := (*f)()
+			if err != nil && err != http.ErrServerClosed {
+				// Error starting or closing listener:
+				log.Fatalf("HTTP server ListenAndServe: %v", err)
+			}
+		}()
 	}
 
 	<-idleConnsClosed
+	log.Printf("Shutdown.")
 }

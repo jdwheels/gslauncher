@@ -1,10 +1,9 @@
 module defilade.io/gslauncher
 
-go 1.13
+go 1.15
 
 require (
-	github.com/aws/aws-sdk-go v1.25.36 // indirect
-	github.com/jdwheels/xaws v0.0.0-20191005192618-402177c8765a
-	golang.org/x/net v0.0.0-20191116160921-f9c825593386
-	golang.org/x/text v0.3.2 // indirect
+	github.com/gorilla/mux v1.8.0
+	github.com/jdwheels/xaws v0.0.0-20201022105140-a3e561092acc
+	golang.org/x/net v0.0.0-20201021035429-f5854403a974
 )
